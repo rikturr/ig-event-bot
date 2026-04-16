@@ -6,6 +6,7 @@ import json
 import datetime
 import os.path
 from zoneinfo import ZoneInfo
+import os
 from datetime import datetime, timedelta
 
 from google.auth.transport.requests import Request
@@ -17,6 +18,7 @@ from googleapiclient.errors import HttpError
 
 REPLICATE_TOKEN = open("creds/replicate_token.txt").read().strip()
 RAINDROP_TOKEN = open("creds/raindrop_token.txt").read().strip()
+os.environ['REPLICATE_API_TOKEN'] = REPLICATE_TOKEN
 
 CALENDAR_ID = open("creds/calendar_id.txt").read().strip()
 GCLOUD_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
