@@ -9,6 +9,9 @@ from zoneinfo import ZoneInfo
 import os
 from datetime import datetime, timedelta
 
+import base64
+from email.message import EmailMessage
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -21,7 +24,11 @@ RAINDROP_TOKEN = open("creds/raindrop_token.txt").read().strip()
 os.environ['REPLICATE_API_TOKEN'] = REPLICATE_TOKEN
 
 CALENDAR_ID = open("creds/calendar_id.txt").read().strip()
-GCLOUD_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+EMAIL = "rikturr@gmail.com"
+GCLOUD_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
 
 
 def run_replicate_model(uri: str):
@@ -107,40 +114,30 @@ def parse_dt(dt_str):
 
 
 
-def create_calendar_event(uri, details):
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", GCLOUD_SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", GCLOUD_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open("token.json", "w") as token:
-            token.write(creds.to_json())
-
+def create_calendar_event(uri, details, creds):
     try:
         service = build("calendar", "v3", credentials=creds)
 
+        if not details["title"] or (not details["date"] and not details["start_time"]):
+            gmail_send_message(
+                subject=f"[IG BOT] Event creation ERROR {details['title']}",
+                msg=f"""{uri}
+
+                {details}
+
+                Cannot create event, no title, date, or start time
+                """,
+                creds=creds,
+            )
+            print("Cannot create event, no title, date, or start time")
+
         event = {
             "summary": details["title"],
-            "location": details["location"] + "\n" + details["address"],
-            "description": uri + "\n\n" + details["description"],
+            "location": details.get("location", "") + "\n" + details.get("address", ""),
+            "description": uri + "\n\n" + details.get("description", ""),
             "start": {},
             "end": {},
         }
-
-        if not details["date"] and not details["start_time"]:
-            raise ValueError("Cannot create event, no date or start time")
-        
         
         if not details["start_time"]:
             # all day event
@@ -160,14 +157,118 @@ def create_calendar_event(uri, details):
         event = service.events().insert(calendarId=CALENDAR_ID, body=event, sendUpdates="all").execute()
         print("EVENT", event.get('htmlLink'))
 
+        gmail_send_message(
+            subject=f"[IG BOT] Event created: {details['title']}",
+            msg=f"""
+            Event created: {event.get('htmlLink')}
+
+            {uri}
+
+            {json.dumps(details, indent=4)}
+            """,
+            creds=creds,
+        )
+
 
     except HttpError as error:
         print(f"An error occurred: {error}")
+        gmail_send_message(
+            subject=f"[IG BOT] Event creation ERROR",
+            msg=f"""{uri}
+
+            {details}
+
+            {error}
+            """,
+            creds=creds,
+        )
+
+
+def gmail_send_message(subject, msg, creds):
+    try:
+        service = build("gmail", "v1", credentials=creds)
+        message = EmailMessage()
+
+        message.set_content(msg)
+
+        message["To"] = EMAIL
+        message["From"] = EMAIL
+        message["Subject"] = subject
+
+        # encoded message
+        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        create_message = {"raw": encoded_message}
+        # pylint: disable=E1101
+        send_message = (
+            service.users()
+            .messages()
+            .send(userId="me", body=create_message)
+            .execute()
+        )
+        print(f'Message Id: {send_message["id"]}')
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+        send_message = None
+    return send_message
+
+
+def google_authenticate():
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", GCLOUD_SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", GCLOUD_SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
+
+    return creds
+
+
+def create_events_from_bookmarks():
+    bookmarks = get_raindrop_bookmarks()
+    for id, uri in bookmarks:
+        try:
+            clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
+            image_uri = f"{clean_uri}media/?size=l"
+            print(id, uri, image_uri)
+
+            model_results = run_replicate_model(image_uri)
+            create_calendar_event(uri, model_results, creds)
+
+            delete_raindrop_bookmark(id)
+            print()
+            time.sleep(10)
+        except Exception as e:
+            gmail_send_message(
+                subject=f"[IG BOT] Event creation ERROR",
+                msg=f"""{id}, {uri}, {image_uri}
+
+                {e}
+                """,
+                creds=creds,
+            )
+            print("ERROR", e)
+        
+        
 
 
 if __name__ == "__main__":
     print()
     print()
+
+    creds = google_authenticate()
     # shamel garden event
     # print(run_replicate_model("https://scontent-lga3-2.cdninstagram.com/v/t51.82787-15/671174124_18175551667399104_5145419071611959600_n.jpg?stp=dst-jpg_e35_p1080x1080_sh0.08_tt6&_nc_ht=scontent-lga3-2.cdninstagram.com&_nc_cat=100&_nc_oc=Q6cZ2gGPzX2BLZLxKGVLxlJCON2H9tLkdxoEasxLi9DSp5luuVEpbTN8ktiWPZE_XvuVFE0&_nc_ohc=VFg2h0gcLAUQ7kNvwGptTLF&_nc_gid=Knoh-Fpai4bbwQnbNfbJXQ&edm=AGenrX8BAAAA&ccb=7-5&oh=00_Af0VGB7Bsums490mdzZCp7v-zDBuY48hOcInquPKNUXJWQ&oe=69E6FCED&_nc_sid=ed990e"))
 
@@ -186,16 +287,5 @@ if __name__ == "__main__":
     # model_results = run_replicate_model("https://www.instagram.com/p/DXFVnf0CQ0A/media/?size=l")
     # create_calendar_event("https://www.instagram.com/p/DXFVnf0CQ0A", model_results)
 
-    bookmarks = get_raindrop_bookmarks()
-    for id, uri in bookmarks:
-        clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
-        image_uri = f"{clean_uri}media/?size=l"
-        print(id, uri, image_uri)
-
-        model_results = run_replicate_model(image_uri)
-        create_calendar_event(uri, model_results)
-        delete_raindrop_bookmark(id)
-
-        print()
-        time.sleep(10)
+    create_events_from_bookmarks()
 
