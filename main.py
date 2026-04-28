@@ -173,9 +173,7 @@ def app(request):
             image_uri = f"{clean_uri}media/?size=l"
             event_link = uri
         elif "photo" in message:
-            if len(message["photo"]) > 1:
-                raise ValueError("Only one photo at a time supported")
-            image_uri = event_bot.get_telegram_photo_url(message["photo"][0]["file_id"])
+            image_uri = event_bot.get_telegram_photo_url(message["photo"][-1]["file_id"])
             event_link = "[created from image]"
         else:
             raise ValueError(f"Unsupported message sent: {message}")
