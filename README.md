@@ -11,7 +11,28 @@ gcloud secrets create telegram-bot-secret --data-file=creds/telegram_bot_secret.
 ...
 ```
 
-## Test webserver locally
+Create Cloud run service:
+- continuous deploy from github project
+- set service account
+- mount secrets as env vars
+
+Create telegram webhook:
+
+```
+python telegram_webhook_setup.py
+```
+
+## Test webhook
+
+```
+curl -d '{"message": {"text": "https://www.instagram.com/p/DXrZluQjmCO/?utm_source=ig_web_button_native_share"}}' \
+     -X POST \
+     -H "Content-Type: application/json" \
+     -H "X-Telegram-Bot-Api-Secret-Token: $(cat creds/telegram_bot_secret.txt)" \
+     $(cat creds/service_url.txt)
+```
+
+## Local dev
 
 start server
 

@@ -170,6 +170,7 @@ class EventBot:
 def app(request):
     event_bot = EventBot()
 
+    request_json = request.get_json(silent=True)
     request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
 
     if request_telegram_secret != event_bot.telegram_bot_secret:
@@ -178,14 +179,12 @@ def app(request):
         return "Not authorized!"
     else:
         try:
-            request_json = request.get_json(silent=True)
-
             uri = request_json["message"]["text"].strip()
             clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
             if "instagram.com" in clean_uri:
                 image_uri = f"{clean_uri}media/?size=l"
             else:
-                image_uri = clean_uri
+                raise ValueError("Unsupported message sent")
 
             model_results = event_bot.run_replicate_model(image_uri)
             event_bot.create_calendar_event(uri, model_results)
