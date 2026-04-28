@@ -9,8 +9,6 @@ from zoneinfo import ZoneInfo
 import os
 from datetime import datetime, timedelta
 import logging
-import base64
-from email.message import EmailMessage
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -26,12 +24,8 @@ PROJECT_ID = "ig-event-bot"
 REPLICATE_SECRET = "replicate-token"
 RAINDROP_SECRET = "raindrop-token"
 CALENDAR_SECRET = "calendar-id"
-
-EMAIL = "rikturr@gmail.com"
-# GCLOUD_SCOPES = [
-#     "https://www.googleapis.com/auth/calendar.events",
-#     "https://www.googleapis.com/auth/gmail.modify",
-# ]
+TELEGRAM_SECRET = "telegram-token"
+TELEGRAM_CHAT_SECRET = "telegram-chat"
 
 class EventBot:
     def __init__(self) -> None:
@@ -40,6 +34,8 @@ class EventBot:
 
         self.raindrop_token = self.get_gcloud_secret(RAINDROP_SECRET)
         self.calendar_id = self.get_gcloud_secret(CALENDAR_SECRET)
+        self.telegram_token = self.get_gcloud_secret(TELEGRAM_SECRET)
+        self.telegram_chat = self.get_gcloud_secret(TELEGRAM_CHAT_SECRET)
 
     def get_gcloud_secret(self, secret_id: str):
         client = secretmanager.SecretManagerServiceClient()
@@ -47,7 +43,7 @@ class EventBot:
 
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8")
-
+    
     def run_replicate_model(self, uri: str):
         input = {
             "media": uri,
@@ -128,99 +124,64 @@ class EventBot:
         return dt
 
     def create_calendar_event(self, uri, details):
-        try:
-            service = build("calendar", "v3")
+        service = build("calendar", "v3")
 
-            if not details["title"] or (not details["date"] and not details["start_time"]):
-                self.gmail_send_message(
-                    subject=f"[IG BOT] Event creation ERROR {details['title']}",
-                    msg=f"""{uri}
-
-                    {details}
-
-                    Cannot create event, no title, date, or start time
-                    """,
-                )
-                logging.info("Cannot create event, no title, date, or start time")
-
-            event = {
-                "summary": details["title"],
-                "location": details.get("location", "") + "\n" + details.get("address", ""),
-                "description": uri + "\n\n" + details.get("description", ""),
-                "start": {},
-                "end": {},
-            }
-            
-            if not details["start_time"]:
-                # all day event
-                dt = EventBot.parse_dt(details["date"]).strftime("%Y-%m-%d")
-                event["start"] = {"date": dt}
-                event["end"] = {"date": dt}
-            else:
-                start_date = EventBot.parse_dt(details["start_time"])
-                start_dt = start_date.isoformat()
-                event["start"] = {"dateTime": start_dt}
-                if details["end_time"]:
-                    event["end"] = {"dateTime": EventBot.parse_dt(details["end_time"]).isoformat()}
-                else:
-                    # no end time specified, end in 1hr 
-                    event["end"] = {"dateTime": (start_date + timedelta(hours=1)).isoformat()}
-
-            logging.info(f"EVENT REQUEST: {event}")
-            event = service.events().insert(calendarId=self.calendar_id, body=event, sendUpdates="all").execute()
-            logging.info("EVENT: {event.get('htmlLink')}")
-
-            self.gmail_send_message(
-                subject=f"[IG BOT] Event created: {details['title']}",
-                msg=f"""
-                Event created: {event.get('htmlLink')}
-
-                {uri}
-
-                {json.dumps(details, indent=4)}
-                """,
-            )
-
-
-        except HttpError as error:
-            logging.info(f"An error occurred: {error}")
-            self.gmail_send_message(
-                subject=f"[IG BOT] Event creation ERROR",
-                msg=f"""{uri}
+        if not details["title"] or (not details["date"] and not details["start_time"]):
+            self.send_telegram_message(
+                f"""{uri}
 
                 {details}
 
-                {error}
+                Cannot create event, no title, date, or start time
                 """,
             )
+            logging.info("Cannot create event, no title, date, or start time")
 
-    def gmail_send_message(self, subject, msg):
+        event = {
+            "summary": details["title"],
+            "location": details.get("location", "") + "\n" + details.get("address", ""),
+            "description": uri + "\n\n" + details.get("description", ""),
+            "start": {},
+            "end": {},
+        }
+        
+        if not details["start_time"]:
+            # all day event
+            dt = EventBot.parse_dt(details["date"]).strftime("%Y-%m-%d")
+            event["start"] = {"date": dt}
+            event["end"] = {"date": dt}
+        else:
+            start_date = EventBot.parse_dt(details["start_time"])
+            start_dt = start_date.isoformat()
+            event["start"] = {"dateTime": start_dt}
+            if details["end_time"]:
+                event["end"] = {"dateTime": EventBot.parse_dt(details["end_time"]).isoformat()}
+            else:
+                # no end time specified, end in 1hr 
+                event["end"] = {"dateTime": (start_date + timedelta(hours=1)).isoformat()}
+
+        logging.info(f"EVENT REQUEST: {event}")
+        event = service.events().insert(calendarId=self.calendar_id, body=event, sendUpdates="all").execute()
+        logging.info("EVENT: {event.get('htmlLink')}")
+
+        self.send_telegram_message(
+            msg=f"""
+            Event created: {event.get('htmlLink')}
+
+            {uri}
+
+            {json.dumps(details, indent=4)}
+            """,
+        )
+    
+    def send_telegram_message(self, msg):
         try:
-            service = build("gmail", "v1")
-            message = EmailMessage()
-
-            message.set_content(msg)
-
-            message["To"] = EMAIL
-            message["From"] = EMAIL
-            message["Subject"] = subject
-
-            # encoded message
-            encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
-
-            create_message = {"raw": encoded_message}
-            # pylint: disable=E1101
-            send_message = (
-                service.users()
-                .messages()
-                .send(userId="me", body=create_message)
-                .execute()
+            requests.post(
+                f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
+                json={"chat_id": self.telegram_chat, "text": msg}
             )
-            logging.info(f'Message Id: {send_message["id"]}')
         except HttpError as error:
             logging.info(f"An error occurred: {error}")
-            send_message = None
-        return send_message
 
     def create_events_from_bookmarks(self):
         bookmarks = self.get_raindrop_bookmarks()
@@ -239,9 +200,9 @@ class EventBot:
 
                 self.delete_raindrop_bookmark(id)            
             except Exception as e:
-                self.gmail_send_message(
-                    subject=f"[IG BOT] Event creation ERROR",
-                    msg=f"""{id}, {uri}, {image_uri}
+                self.send_telegram_message(
+                    msg=f"""Event creation ERROR
+                    {id}, {uri}, {image_uri}
 
                     {e}
                     """,
@@ -254,8 +215,7 @@ class EventBot:
 
 def main():
     event_bot = EventBot()
-    # event_bot.create_events_from_bookmarks()
-    event_bot.gmail_send_message('test', 'test')
+    event_bot.create_events_from_bookmarks()
 
 
 if __name__ == "__main__":
