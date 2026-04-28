@@ -1,7 +1,6 @@
 import replicate
 import requests
 from urllib import parse
-import time
 import json
 import datetime
 import os.path
@@ -15,35 +14,20 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+import functions_framework
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from google.cloud import secretmanager
 
 
 PROJECT_ID = "ig-event-bot"
-REPLICATE_SECRET = "replicate-token"
-RAINDROP_SECRET = "raindrop-token"
-CALENDAR_SECRET = "calendar-id"
-TELEGRAM_SECRET = "telegram-token"
-TELEGRAM_CHAT_SECRET = "telegram-chat"
 
 class EventBot:
     def __init__(self) -> None:
-        replicate_token = self.get_gcloud_secret(REPLICATE_SECRET)
-        os.environ['REPLICATE_API_TOKEN'] = replicate_token
+        self.calendar_id = os.environ["CALENDAR_ID"]
+        self.telegram_token = os.environ["TELEGRAM_TOKEN"]
+        self.telegram_chat = os.environ["TELEGRAM_CHAT"]
+        self.telegram_bot_secret = os.environ["TELEGRAM_BOT_SECRET"]
+        # REPLICATE_API_TOKEN should also be set in env, pulled by replicate method
 
-        self.raindrop_token = self.get_gcloud_secret(RAINDROP_SECRET)
-        self.calendar_id = self.get_gcloud_secret(CALENDAR_SECRET)
-        self.telegram_token = self.get_gcloud_secret(TELEGRAM_SECRET)
-        self.telegram_chat = self.get_gcloud_secret(TELEGRAM_CHAT_SECRET)
-
-    def get_gcloud_secret(self, secret_id: str):
-        client = secretmanager.SecretManagerServiceClient()
-        name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
-
-        response = client.access_secret_version(request={"name": name})
-        return response.payload.data.decode("UTF-8")
-    
     def run_replicate_model(self, uri: str):
         input = {
             "media": uri,
@@ -76,6 +60,7 @@ class EventBot:
             Otherwise, mark all fields as error, and provide "image_description", but no other fields.
             """
         }
+        logging.info("Calling replicate model")
 
         output = replicate.run(
             "lucataco/qwen3-vl-8b-instruct:39e893666996acf464cff75688ad49ac95ef54e9f1c688fbc677330acc478e11",
@@ -162,7 +147,7 @@ class EventBot:
 
         logging.info(f"EVENT REQUEST: {event}")
         event = service.events().insert(calendarId=self.calendar_id, body=event, sendUpdates="all").execute()
-        logging.info("EVENT: {event.get('htmlLink')}")
+        logging.info(f"EVENT: {event.get('htmlLink')}")
 
         self.send_telegram_message(
             msg=f"""
@@ -175,48 +160,50 @@ class EventBot:
         )
     
     def send_telegram_message(self, msg):
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
-                json={"chat_id": self.telegram_chat, "text": msg}
-            )
-        except HttpError as error:
-            logging.info(f"An error occurred: {error}")
-
-    def create_events_from_bookmarks(self):
-        bookmarks = self.get_raindrop_bookmarks()
-        logging.info(f"Found {len(bookmarks)} raindrop bookmarks")
-        for id, uri, cover_uri in bookmarks:
-            try:
-                clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
-                if "instagram.com" in clean_uri:
-                    image_uri = f"{clean_uri}media/?size=l"
-                else:
-                    image_uri = cover_uri
-                logging.info(f"{id}, {uri}, {image_uri}")
-
-                model_results = self.run_replicate_model(image_uri)
-                self.create_calendar_event(uri, model_results)
-
-                self.delete_raindrop_bookmark(id)            
-            except Exception as e:
-                self.send_telegram_message(
-                    msg=f"""Event creation ERROR
-                    {id}, {uri}, {image_uri}
-
-                    {e}
-                    """,
-                )
-                logging.error(e)
-            finally:
-                logging.info("")
-                time.sleep(10)
+        requests.post(
+            f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
+            json={"chat_id": self.telegram_chat, "text": msg}
+        )
             
 
-def main():
+@functions_framework.http
+def app(request):
     event_bot = EventBot()
-    event_bot.create_events_from_bookmarks()
+
+    request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
+
+    if request_telegram_secret != event_bot.telegram_bot_secret:
+        logging.error("Not authorized!")
+        logging.info(request.headers)
+        return "Not authorized!"
+    else:
+        try:
+            request_json = request.get_json(silent=True)
+
+            uri = request_json["message"]["text"].strip()
+            clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
+            if "instagram.com" in clean_uri:
+                image_uri = f"{clean_uri}media/?size=l"
+            else:
+                image_uri = clean_uri
+
+            model_results = event_bot.run_replicate_model(image_uri)
+            event_bot.create_calendar_event(uri, model_results)
+
+            return "success!"
+        except Exception as e:
+            event_bot.send_telegram_message(
+                msg=f"""Event creation ERROR
+                {request_json}
+
+                {e}
+                """,
+            )
+            logging.error(e)
+
+            raise e
 
 
 if __name__ == "__main__":
-    main()
+    event_bot = EventBot()
+    event_bot.create_events_from_bookmarks()

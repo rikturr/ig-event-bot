@@ -3,3 +3,4 @@ token.json
 creds/**
 .DS_Store
 .python-version
+__pycache__/**
