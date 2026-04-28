@@ -168,40 +168,41 @@ class EventBot:
 
 @functions_framework.http
 def app(request):
-    event_bot = EventBot()
+    try:
+        request_json = request.get_json(silent=True)
+        request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
 
-    request_json = request.get_json(silent=True)
-    request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
+        if request_telegram_secret != event_bot.telegram_bot_secret:
+            logging.error("Not authorized!")
+            logging.info(request.headers)
+            return "Not authorized!"
+    except Exception as e:
+        logging.error("Error getting request")
+        logging.error(e)
+        return "error getting request" # don't raise error because telegram will retry
+        
+    try:
+        event_bot = EventBot()
 
-    if request_telegram_secret != event_bot.telegram_bot_secret:
-        logging.error("Not authorized!")
-        logging.info(request.headers)
-        return "Not authorized!"
-    else:
-        try:
-            uri = request_json["message"]["text"].strip()
-            clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
-            if "instagram.com" in clean_uri:
-                image_uri = f"{clean_uri}media/?size=l"
-            else:
-                raise ValueError(f"Unsupported message sent: {uri}")
+        uri = request_json["message"]["text"].strip()
+        clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
+        if "instagram.com" in clean_uri:
+            image_uri = f"{clean_uri}media/?size=l"
+        else:
+            raise ValueError(f"Unsupported message sent: {uri}")
 
-            model_results = event_bot.run_replicate_model(image_uri)
-            event_bot.create_calendar_event(uri, model_results)
+        model_results = event_bot.run_replicate_model(image_uri)
+        event_bot.create_calendar_event(uri, model_results)
 
-            return "success!"
-        except Exception as e:
-            event_bot.send_telegram_message(
-                msg=f"""Event creation ERROR
-                {request_json}
+        return "success!"
+    except Exception as e:
+        event_bot.send_telegram_message(
+            msg=f"""Event creation ERROR
+            {request_json}
 
-                {e}
-                """,
-            )
-            logging.error(e)
-            return "error"  # don't raise error because telegram will retry
+            {e}
+            """,
+        )
+        logging.error(e)
+        return "error" # don't raise error because telegram will retry
 
-
-if __name__ == "__main__":
-    event_bot = EventBot()
-    event_bot.create_events_from_bookmarks()
