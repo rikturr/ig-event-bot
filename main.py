@@ -199,8 +199,7 @@ def app(request):
                 """,
             )
             logging.error(e)
-
-            raise e
+            return "error"  # don't raise error because telegram will retry
 
 
 if __name__ == "__main__":
