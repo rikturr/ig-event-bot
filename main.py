@@ -26,7 +26,7 @@ class EventBot:
         self.telegram_token = os.environ["TELEGRAM_TOKEN"]
         self.telegram_chat = os.environ["TELEGRAM_CHAT"]
         self.telegram_bot_secret = os.environ["TELEGRAM_BOT_SECRET"]
-        # REPLICATE_API_TOKEN should also be set in env, pulled by replicate method
+        self.replicate_api_token = os.environ["REPLICATE_API_TOKEN"]
 
     def run_replicate_model(self, uri: str):
         input = {
@@ -172,7 +172,7 @@ def app(request):
         request_json = request.get_json(silent=True)
         request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
 
-        if request_telegram_secret != event_bot.telegram_bot_secret:
+        if request_telegram_secret != os.environ["TELEGRAM_BOT_SECRET"]:
             logging.error("Not authorized!")
             logging.info(request.headers)
             return "Not authorized!"
