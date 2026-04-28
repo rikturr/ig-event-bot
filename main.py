@@ -151,6 +151,7 @@ class EventBot:
 def app(request):
     try:
         request_json = request.get_json(silent=True)
+        logging.info(request_json)
         request_telegram_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token')
 
         if request_telegram_secret != os.environ["TELEGRAM_BOT_SECRET"]:
