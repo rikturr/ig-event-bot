@@ -69,33 +69,6 @@ class EventBot:
         logging.info(f"MODEL OUTPUT: {output}")
         return json.loads(output)
 
-    def get_raindrop_bookmarks(self):
-        headers = {
-            "Authorization": f"Bearer {self.raindrop_token}",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.get("https://api.raindrop.io/rest/v1/raindrops/0", headers=headers)
-        results = response.json()
-
-        output = []
-        for bookmark in results["items"]:
-            output.append((bookmark["_id"], bookmark["link"], bookmark["cover"]))
-
-        return output
-
-    def delete_raindrop_bookmark(self, id):
-        headers = {
-            "Authorization": f"Bearer {self.raindrop_token}",
-            "Content-Type": "application/json"
-        }
-
-        response = requests.delete(f"https://api.raindrop.io/rest/v1/raindrop/{id}", headers=headers)
-        result = response.status_code
-        if result != 200:
-            raise ValueError(f"Failed to delete raindrop bookmark: {id}")
-        logging.info(f"DELETED BOOKMARK: {id}")
-
     @staticmethod
     def parse_dt(dt_str):
         # most events do not specify year, and the parser arbitrarily adds one
@@ -164,6 +137,14 @@ class EventBot:
             f"https://api.telegram.org/bot{self.telegram_token}/sendMessage",
             json={"chat_id": self.telegram_chat, "text": msg}
         )
+    
+    def get_telegram_photo_url(self, file_id):
+        response = requests.get(
+            f"https://api.telegram.org/bot{self.telegram_token}/getFile",
+            params={"file_id": file_id},
+        )
+        file_path = response.json()["result"]["file_path"]
+        return f"https://api.telegram.org/file/bot{self.telegram_token}/{file_path}"
             
 
 @functions_framework.http
@@ -183,16 +164,24 @@ def app(request):
         
     try:
         event_bot = EventBot()
+        message = request_json["message"]
 
-        uri = request_json["message"]["text"].strip()
-        clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
-        if "instagram.com" in clean_uri:
+        event_link = None
+        if "text" in message and "instagram.com" in message["text"]:
+            uri = request_json["message"]["text"].strip()
+            clean_uri = parse.urlunparse(parse.urlparse(uri)._replace(query=""))
             image_uri = f"{clean_uri}media/?size=l"
+            event_link = uri
+        elif "photo" in message:
+            if len(message["photo"]) > 1:
+                raise ValueError("Only one photo at a time supported")
+            image_uri = event_bot.get_telegram_photo_url(message["photo"][0]["file_id"])
+            event_link = "[created from image]"
         else:
-            raise ValueError(f"Unsupported message sent: {uri}")
+            raise ValueError(f"Unsupported message sent: {message}")
 
         model_results = event_bot.run_replicate_model(image_uri)
-        event_bot.create_calendar_event(uri, model_results)
+        event_bot.create_calendar_event(event_link, model_results)
 
         return "success!"
     except Exception as e:
@@ -206,3 +195,7 @@ def app(request):
         logging.error(e)
         return "error" # don't raise error because telegram will retry
 
+
+# uncomment for testing
+# if __name__ == "__main__":
+#     event_bot = EventBot()

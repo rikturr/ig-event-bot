@@ -34,7 +34,7 @@ curl -d '{"message": {"text": "https://www.instagram.com/p/DXrZluQjmCO/?utm_sour
 
 ## Local dev
 
-start server
+### start server
 
 ```
 gcloud auth application-default login --impersonate-service-account=event-bot@ig-event-bot.iam.gserviceaccount.com
@@ -47,7 +47,7 @@ TELEGRAM_BOT_SECRET=$(cat creds/telegram_bot_secret.txt) \
 functions-framework --target=app
 ```
 
-send request
+### send request
 
 good event
 ```
@@ -61,6 +61,15 @@ curl -d '{"message": {"text": "https://www.instagram.com/p/DXrZluQjmCO/?utm_sour
 not event
 ```
 curl -d '{"message": {"text": "https://www.instagram.com/p/DAGpeTNpCJt/"}}' \
+     -X POST \
+     -H "Content-Type: application/json" \
+     -H "X-Telegram-Bot-Api-Secret-Token: $(cat creds/telegram_bot_secret.txt)" \
+     localhost:8080
+```
+
+image
+```
+curl -d '{"message": {"photo": [{"file_id": "AgACAgEAAxkBAANVafEJonP48mdRBRX4PJqa98FzMIkAAuAMaxtbS4hHpEGUvFjx9V0BAAMCAAN5AAM7BA"}]}}' \
      -X POST \
      -H "Content-Type: application/json" \
      -H "X-Telegram-Bot-Api-Secret-Token: $(cat creds/telegram_bot_secret.txt)" \
