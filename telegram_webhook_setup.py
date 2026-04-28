@@ -12,6 +12,7 @@ def set_webhook():
             "url": SERVICE_URL, 
             "allowed_updates": '["message"]',
             "secret_token": TELEGRAM_BOT_SECRET,
+            "drop_pending_updates": True,
         }
     )
 

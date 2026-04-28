@@ -184,8 +184,7 @@ def app(request):
             if "instagram.com" in clean_uri:
                 image_uri = f"{clean_uri}media/?size=l"
             else:
-                logging.error(f"Unsupported message sent: {uri}")
-                event_bot.send_telegram_message(f"Unsupported message sent: {uri}")
+                raise ValueError(f"Unsupported message sent: {uri}")
 
             model_results = event_bot.run_replicate_model(image_uri)
             event_bot.create_calendar_event(uri, model_results)
